@@ -15,7 +15,7 @@ struct Args {
     files: Vec<PathBuf>,
     /// Shift the times of the subtitles by the given seconds
     #[arg(long, value_parser = valid_duration, allow_negative_numbers = true)]
-    shift: f32,
+    shift: Option<f32>,
 }
 
 fn valid_duration(s: &str) -> Result<f32, String> {
@@ -84,8 +84,10 @@ fn shift_subtitle_file(file: PathBuf, shift: f32) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    for file in args.files {
-        shift_subtitle_file(file, args.shift)?;
+    if let Some(shift) = args.shift {
+        for file in args.files {
+            shift_subtitle_file(file, shift)?;
+        }
     }
     Ok(())
 }
