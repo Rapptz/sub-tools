@@ -19,8 +19,12 @@ struct Args {
     /// Fixes common issues with Japanese subtitle files.
     ///
     /// The things removed are as follows:
+    ///
     /// * [外:37F6ECF37A0A3EF8DFF083CCC8754F81]-like instances of text
+    ///
     /// * Half-width kana is converted into full width kana
+    ///
+    /// * Removal of &lrm;, U+202A, and U+202C characters
     #[arg(long = "fix-jp", required = false, default_value_t = false)]
     fix_japanese: bool,
 }

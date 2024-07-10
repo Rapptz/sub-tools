@@ -148,6 +148,9 @@ impl Dialogue {
         if let Some(result) = replace_halfwith_kana(&self.text) {
             self.text = result;
         }
+
+        // Fix up &lrm; U+202A and U+202C characters
+        self.text = self.text.replace(['\u{202a}', '\u{202c}'], "").replace("&lrm;", "");
     }
 }
 
