@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::Display, str::FromStr, time::Duration};
+use std::{error::Error, fmt::Display, path::Path, str::FromStr, time::Duration};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dialogue {
@@ -150,7 +150,10 @@ impl Dialogue {
         }
 
         // Fix up &lrm; U+202A and U+202C characters
-        self.text = self.text.replace(['\u{202a}', '\u{202c}'], "").replace("&lrm;", "");
+        self.text = self
+            .text
+            .replace(['\u{202a}', '\u{202c}'], "")
+            .replace("&lrm;", "");
     }
 }
 
@@ -204,11 +207,12 @@ impl Display for ParseDialogueError {
     }
 }
 
-fn parse_srt_time(s: &str) -> Option<Duration> {
+pub(crate) fn parse_srt_time(s: &str) -> Option<Duration> {
     // HH:MM:SS,mmm
-    let (rest, ms) = s.split_once(',')?;
+    // HH is optional (due to VTT)
+    let (rest, ms) = s.split_once([',', '.'])?;
     let mut split = rest.trim().splitn(3, ':');
-    let hours: u64 = split.next()?.parse().ok()?;
+    let hours: u64 = split.next()?.parse().ok().unwrap_or_default();
     let minutes: u64 = split.next()?.parse().ok()?;
     let seconds: u64 = split.next()?.parse().ok()?;
     let seconds = seconds + (minutes * 60) + (hours * 3600);
@@ -249,6 +253,20 @@ impl FromStr for Dialogue {
             text,
         })
     }
+}
+
+pub fn load(path: &Path) -> anyhow::Result<Vec<Dialogue>> {
+    use anyhow::Context;
+    let buffer = crate::load_file(path)?;
+    buffer
+        .split_terminator("\n\n")
+        .enumerate()
+        .map(|(i, s)| {
+            s.parse::<Dialogue>()
+                .with_context(|| format!("from srt dialogue {}", i + 1))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("Failed to extract dialogue from {}", path.display()))
 }
 
 #[cfg(test)]

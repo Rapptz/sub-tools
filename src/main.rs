@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Seek, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -12,6 +12,8 @@ use sub_tools::srt::Dialogue;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The subtitle files to operate on
+    ///
+    /// If a vtt is given, then it is converted into an srt
     files: Vec<PathBuf>,
     /// Shift the times of the subtitles by the given seconds
     #[arg(long, value_parser = valid_duration, allow_negative_numbers = true)]
@@ -29,12 +31,6 @@ struct Args {
     fix_japanese: bool,
 }
 
-impl Args {
-    fn is_modified(&self) -> bool {
-        self.fix_japanese || self.shift.is_some()
-    }
-}
-
 fn valid_duration(s: &str) -> Result<f32, String> {
     let time: f32 = s
         .parse()
@@ -50,50 +46,47 @@ fn valid_duration(s: &str) -> Result<f32, String> {
 struct InProgressFile {
     pending_filename: PathBuf,
     dialogue: Vec<Dialogue>,
+    dirty: bool,
 }
 
 impl InProgressFile {
     fn new(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let mut fp = File::open(path)?;
+        let is_vtt = path.extension().map(|s| s == "vtt").unwrap_or_default();
         let new_filename = match path.file_stem() {
             Some(filename) => {
                 let mut new_file = PathBuf::new();
                 let mut filename = filename.to_os_string();
-                filename.push("_modified.srt");
+                if is_vtt {
+                    filename.push(".srt")
+                } else {
+                    filename.push("_modified.srt");
+                }
                 new_file.set_file_name(filename);
                 new_file
             }
             None => anyhow::bail!("invalid filename given"),
         };
 
-        let mut buffer = String::new();
-        // Try to check if there's a UTF-8 BOM somewhere
-        let mut bom: [u8; 3] = [0; 3];
-        fp.read_exact(&mut bom)?;
-        if bom != [0xEF, 0xBB, 0xBF] {
-            fp.rewind()?;
-        }
-
-        fp.read_to_string(&mut buffer)?;
-
-        if buffer.contains("\r\n") {
-            buffer = buffer.replace("\r\n", "\n");
-        }
-        let dialogue = buffer
-            .split_terminator("\n\n")
-            .enumerate()
-            .map(|(i, s)| {
-                s.parse::<Dialogue>()
-                    .with_context(|| format!("from srt dialogue {}", i + 1))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .with_context(|| format!("Failed to extract dialogue from {}", path.display()))?;
+        let dialogue = if is_vtt {
+            sub_tools::vtt::load(path)?
+        } else {
+            sub_tools::srt::load(path)?
+        };
 
         Ok(Self {
             pending_filename: new_filename,
             dialogue,
+            dirty: is_vtt,
         })
+    }
+
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    const fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     fn save(&self) -> anyhow::Result<()> {
@@ -118,6 +111,7 @@ fn main() -> anyhow::Result<()> {
     let mut files = files?;
     if let Some(shift) = args.shift {
         for file in files.iter_mut() {
+            file.mark_dirty();
             for dialogue in file.dialogue.iter_mut() {
                 dialogue.shift_by(shift);
             }
@@ -126,15 +120,18 @@ fn main() -> anyhow::Result<()> {
 
     if args.fix_japanese {
         for file in files.iter_mut() {
+            file.mark_dirty();
             for dialogue in file.dialogue.iter_mut() {
                 dialogue.fix_japanese();
             }
         }
     }
-    if !files.is_empty() && args.is_modified() {
-        for file in files {
+
+    for file in files {
+        if file.is_dirty() {
             file.save()?;
         }
     }
+
     Ok(())
 }
