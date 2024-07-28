@@ -165,7 +165,7 @@ impl Display for Dialogue {
             let (minutes, seconds) = (seconds / 60, seconds % 60);
             let ms = d.subsec_millis();
             f.write_fmt(format_args!(
-                "{:02}:{:02}:{:02},{}",
+                "{:02}:{:02}:{:02},{:03}",
                 hours, minutes, seconds, ms
             ))
         }
