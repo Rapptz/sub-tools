@@ -19,7 +19,7 @@ fn cue_regex() -> &'static Regex {
 
 fn text_cleanup_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r#"(</?c\.[a-zA-Z]+>|&lrm;|&rlm;)"#).unwrap())
+    REGEX.get_or_init(|| Regex::new(r#"(</?c\.[a-zA-Z_\s]+>|&lrm;|&rlm;)"#).unwrap())
 }
 
 fn parse_dialogue(segment: &str) -> Option<Dialogue> {
