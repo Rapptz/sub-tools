@@ -2,11 +2,63 @@ use std::{
     fs::File,
     io::Write,
     path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
 };
 
 use anyhow::Context;
 use clap::Parser;
 use sub_tools::srt::Dialogue;
+
+/// A duration that can be parsed from the command line or as a string input.
+///
+/// The format is `HH:MM:SS.ssss` with `HH` and `.ssss` being optional.
+/// So e.g. 10:24 is 10 minutes and 24 seconds but 10:24:00 is 10 hours, 24 minutes and 0 seconds.
+fn parse_duration_helper(s: &str) -> Option<Duration> {
+    let mut components = s.splitn(3, ':').map(|s| s.parse::<u64>().ok());
+    let first = components.next()??;
+    let second = components.next()??;
+    match components.next() {
+        Some(Some(third)) => {
+            // This case contains hours, minutes, and seconds
+            Some(Duration::from_secs(first * 3600 + second * 60 + third))
+        }
+        Some(None) => {
+            // This one's an invalid parse, e.g. 10:24:aa
+            None
+        }
+        None => {
+            // This case is just 10:24 or 10m24s
+            Some(Duration::from_secs(first * 60 + second))
+        }
+    }
+}
+
+fn parse_duration_fractional_helper(s: &str) -> Option<Duration> {
+    match s.split_once('.') {
+        Some((duration, fractional)) => {
+            let duration = parse_duration_helper(duration)?;
+            let ms = Duration::from_millis(fractional.parse().ok()?);
+            Some(duration + ms)
+        }
+        None => parse_duration_helper(s),
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct InvalidDuration;
+
+impl std::fmt::Display for InvalidDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid duration given (must be HH:MM:SS.ssss format, HH is optional)")
+    }
+}
+
+impl std::error::Error for InvalidDuration {}
+
+fn parse_duration(s: &str) -> Result<Duration, InvalidDuration> {
+    parse_duration_fractional_helper(s).ok_or(InvalidDuration)
+}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -23,12 +75,37 @@ struct Args {
     /// The things removed are as follows:
     ///
     /// * [外:37F6ECF37A0A3EF8DFF083CCC8754F81]-like instances of text
-    ///
     /// * Half-width kana is converted into full width kana
-    ///
     /// * Removal of &lrm;, U+202A, and U+202C characters
-    #[arg(long = "fix-jp", required = false, default_value_t = false)]
+    #[arg(long = "fix-jp", required = false, default_value_t = false, verbatim_doc_comment)]
     fix_japanese: bool,
+
+    /// The duration to start working from.
+    ///
+    /// When shifting or doing any type of editing work, start working
+    /// on dialogue events that start at the specified duration.
+    ///
+    /// The duration format is `HH:MM:SS.ssss`. The `HH` and `.ssss`
+    /// components are not required. For example, `10:24` and `00:10:24`
+    /// are both accepted.
+    #[arg(long, value_parser = parse_duration, verbatim_doc_comment)]
+    start: Option<Duration>,
+    /// The duration to finish working at.
+    ///
+    /// This is the upper end of the range similar to `--start`.
+    #[arg(long, value_parser = parse_duration)]
+    end: Option<Duration>,
+}
+
+impl Args {
+    fn is_within_duration(&self, duration: &Duration) -> bool {
+        match (&self.start, &self.end) {
+            (Some(start), Some(end)) => duration >= start && duration <= end,
+            (Some(start), None) => duration >= start,
+            (None, Some(end)) => duration <= end,
+            (None, None) => true
+        }
+    }
 }
 
 fn valid_duration(s: &str) -> Result<f32, String> {
@@ -113,7 +190,9 @@ fn main() -> anyhow::Result<()> {
         for file in files.iter_mut() {
             file.mark_dirty();
             for dialogue in file.dialogue.iter_mut() {
-                dialogue.shift_by(shift);
+                if args.is_within_duration(&dialogue.start) {
+                    dialogue.shift_by(shift);
+                }
             }
         }
     }
@@ -122,7 +201,9 @@ fn main() -> anyhow::Result<()> {
         for file in files.iter_mut() {
             file.mark_dirty();
             for dialogue in file.dialogue.iter_mut() {
-                dialogue.fix_japanese();
+                if args.is_within_duration(&dialogue.start) {
+                    dialogue.fix_japanese();
+                }
             }
         }
     }
