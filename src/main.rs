@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::Write,
     path::{Path, PathBuf},
-    str::FromStr,
     time::Duration,
 };
 
@@ -77,7 +76,12 @@ struct Args {
     /// * [外:37F6ECF37A0A3EF8DFF083CCC8754F81]-like instances of text
     /// * Half-width kana is converted into full width kana
     /// * Removal of &lrm;, U+202A, and U+202C characters
-    #[arg(long = "fix-jp", required = false, default_value_t = false, verbatim_doc_comment)]
+    #[arg(
+        long = "fix-jp",
+        required = false,
+        default_value_t = false,
+        verbatim_doc_comment
+    )]
     fix_japanese: bool,
 
     /// The duration to start working from.
@@ -103,7 +107,7 @@ impl Args {
             (Some(start), Some(end)) => duration >= start && duration <= end,
             (Some(start), None) => duration >= start,
             (None, Some(end)) => duration <= end,
-            (None, None) => true
+            (None, None) => true,
         }
     }
 }
