@@ -136,7 +136,7 @@ impl InProgressFile {
         let is_vtt = path.extension().map(|s| s == "vtt").unwrap_or_default();
         let new_filename = match path.file_stem() {
             Some(filename) => {
-                let mut new_file = PathBuf::new();
+                let mut new_file = path.to_path_buf();
                 let mut filename = filename.to_os_string();
                 if is_vtt {
                     filename.push(".srt")
