@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Context;
 use clap::Parser;
+use sub_tools::japanese;
 use sub_tools::srt::Dialogue;
 
 /// A duration that can be parsed from the command line or as a string input.
@@ -206,7 +207,7 @@ fn main() -> anyhow::Result<()> {
             file.mark_dirty();
             for dialogue in file.dialogue.iter_mut() {
                 if args.is_within_duration(&dialogue.start) {
-                    dialogue.fix_japanese();
+                    japanese::fix_broken_text(&mut dialogue.text);
                 }
             }
         }

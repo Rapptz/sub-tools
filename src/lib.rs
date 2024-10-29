@@ -1,5 +1,6 @@
 use std::io::{Read as _, Seek as _};
 
+pub mod japanese;
 pub mod srt;
 pub mod vtt;
 
