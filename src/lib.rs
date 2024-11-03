@@ -1,7 +1,10 @@
 use std::io::{Read as _, Seek as _};
 
+pub mod ass;
+pub mod cli;
 pub mod japanese;
 pub mod srt;
+pub mod utils;
 pub mod vtt;
 
 /// Loads a file into a string.

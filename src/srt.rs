@@ -1,4 +1,6 @@
-use std::{error::Error, fmt::Display, path::Path, str::FromStr, time::Duration};
+use std::{error::Error, fmt::Display, io::Write, path::Path, str::FromStr, time::Duration};
+
+use anyhow::Context;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dialogue {
@@ -131,6 +133,20 @@ pub fn load(path: &Path) -> anyhow::Result<Vec<Dialogue>> {
         })
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("Failed to extract dialogue from {}", path.display()))
+}
+
+pub fn save(path: &Path, dialogue: Vec<Dialogue>) -> anyhow::Result<()> {
+    let mut new_contents = dialogue
+        .into_iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    new_contents.push_str("\n\n");
+    let mut new_fp = std::fs::File::create(path)
+        .with_context(|| "could not create new subtitle file".to_string())?;
+    new_fp.write_all(new_contents.as_bytes())?;
+    Ok(())
 }
 
 #[cfg(test)]

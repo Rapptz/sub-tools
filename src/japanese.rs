@@ -8,6 +8,16 @@ fn is_katakana(c: char) -> bool {
     ('\u{30A0}'..='\u{30FA}').contains(&c)
 }
 
+#[inline]
+pub fn is_japanese(ch: char) -> bool {
+    const CJK_MAPPING: [std::ops::RangeInclusive<char>; 3] = [
+        '\u{3040}'..='\u{30ff}', // Hiragana + Katakana
+        '\u{ff66}'..='\u{ff9d}', // Half-width Katakana
+        '\u{4e00}'..='\u{9faf}', // Common + Uncommon Kanji
+    ];
+    CJK_MAPPING.iter().any(|c| c.contains(&ch))
+}
+
 fn replace_halfwith_kana(input: &str) -> Option<String> {
     let index = input.find(is_halfwidth_kana)?;
     let mut output = String::from(&input[..index]);
@@ -131,4 +141,8 @@ pub fn fix_broken_text(text: &mut String) {
     *text = text
         .replace(['\u{202a}', '\u{202c}'], "")
         .replace("&lrm;", "");
+}
+
+pub fn contains_japanese(s: &str) -> bool {
+    s.chars().any(is_japanese)
 }
