@@ -627,10 +627,10 @@ fn ass_timestamp_to_duration(s: &str) -> Option<Duration> {
     let hours = units.next()?.parse::<u64>().ok()?;
     let minutes = units.next()?.parse::<u64>().ok()?;
     let seconds = units.next()?.parse::<u64>().ok()?;
-    let ms = subsec.parse::<u32>().ok()?;
+    let cs = subsec.parse::<u32>().ok()?;
     Some(Duration::new(
         hours * 3600 + minutes * 60 + seconds,
-        ms * 1_000_000,
+        cs * 10_000_000,
     ))
 }
 
