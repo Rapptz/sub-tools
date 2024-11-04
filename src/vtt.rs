@@ -52,6 +52,10 @@ fn parse_dialogue(segment: &str) -> Option<Dialogue> {
 
 pub fn load(path: &Path) -> std::io::Result<Vec<Dialogue>> {
     let buffer = crate::load_file(path)?;
+    load_from_string(&buffer)
+}
+
+pub fn load_from_string(buffer: &str) -> std::io::Result<Vec<Dialogue>> {
     let Some(index) = buffer.find("\n1\n") else {
         return Err(std::io::Error::other("no dialogue found"));
     };

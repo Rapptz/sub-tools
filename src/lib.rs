@@ -29,3 +29,26 @@ pub(crate) fn load_file(path: &std::path::Path) -> std::io::Result<String> {
 
     Ok(buffer)
 }
+
+/// Support subtitle formats
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SubtitleFormat {
+    Srt,
+    Ass,
+    Vtt,
+}
+
+impl SubtitleFormat {
+    /// Detects the subtitle format from the string buffer.
+    pub fn detect(s: &str) -> Option<Self> {
+        if s.starts_with("[Script Info]") {
+            Some(Self::Ass)
+        } else if s.starts_with("WEBVTT") {
+            Some(Self::Vtt)
+        } else if s.starts_with('1') {
+            Some(Self::Srt)
+        } else {
+            None
+        }
+    }
+}

@@ -1154,6 +1154,13 @@ impl Ass {
         Ok(())
     }
 
+    pub fn save_to_writer<W: std::io::Write>(&self, mut writer: W) -> std::io::Result<()> {
+        for section in &self.sections {
+            section.to_ass(&mut writer)?;
+        }
+        Ok(())
+    }
+
     pub fn events(&self) -> impl Iterator<Item = &Event> {
         self.sections
             .iter()
@@ -1166,5 +1173,46 @@ impl Ass {
             .iter_mut()
             .filter_map(|s| s.as_events_mut())
             .flat_map(|e| e.events.iter_mut())
+    }
+}
+
+impl FromStr for Ass {
+    type Err = Error;
+
+    fn from_str(buf: &str) -> Result<Self, Self::Err> {
+        if !buf.starts_with("[Script Info]") {
+            return Err(Error {
+                kind: ErrorKind::MissingScriptInfo,
+                line: 1,
+            });
+        }
+
+        let mut sections = Vec::new();
+        for (index, line) in buf.lines().enumerate() {
+            let line_number = index + 1;
+            if line == "[Script Info]" {
+                sections.push(Section::ScriptInfo(ScriptInfo::new()));
+            } else if line == "[V4+ Styles]" {
+                sections.push(Section::Styles(StylesSection::new()));
+            } else if line == "[Events]" {
+                sections.push(Section::Events(EventsSection::new()));
+            } else if let Some(title) = get_generic_section_title(line) {
+                sections.push(Section::Generic(GenericSection::new(title)));
+            } else if let Some(section) = sections.last_mut() {
+                let Some(parsed) = Line::parse(line) else {
+                    continue;
+                };
+                section
+                    .process_line(parsed)
+                    .map_err(|e| e.with_line(line_number))?;
+            } else {
+                return Err(Error {
+                    kind: ErrorKind::Invalid,
+                    line: line_number,
+                });
+            }
+        }
+
+        Ok(Self { sections })
     }
 }

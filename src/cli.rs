@@ -5,6 +5,7 @@ use clap::{
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
+    io::{stdin, stdout, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     sync::OnceLock,
     time::Duration,
@@ -14,7 +15,7 @@ use crate::{
     ass::{Ass, Colour},
     srt,
     utils::{windows_mut, LendingIterator},
-    vtt,
+    vtt, SubtitleFormat,
 };
 
 fn valid_duration(s: &str) -> Result<f32, String> {
@@ -115,6 +116,60 @@ fn parse_duration(s: &str) -> Result<Duration, InvalidDuration> {
     parse_duration_fractional_helper(s).ok_or(InvalidDuration)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InputOutputLocation {
+    Path(PathBuf),
+    Stdio,
+}
+
+impl InputOutputLocation {
+    fn new(path: PathBuf) -> Self {
+        if path.as_os_str() == "-" {
+            Self::Stdio
+        } else {
+            Self::Path(path)
+        }
+    }
+
+    fn read_as_string(&self) -> std::io::Result<String> {
+        match self {
+            InputOutputLocation::Path(path) => crate::load_file(path),
+            InputOutputLocation::Stdio => {
+                let mut stdin = stdin();
+                let mut buffer = String::new();
+                stdin.read_to_string(&mut buffer)?;
+
+                if buffer.starts_with('\u{feff}') {
+                    // This is pretty inefficient but oh well
+                    // U+FEFF is 3 bytes
+                    buffer.drain(..3);
+                }
+
+                Ok(buffer)
+            }
+        }
+    }
+
+    fn save_ass(&self, ass: &Ass) -> anyhow::Result<()> {
+        match self {
+            InputOutputLocation::Path(path) => ass.save(path)?,
+            InputOutputLocation::Stdio => ass.save_to_writer(stdout().lock())?,
+        }
+        Ok(())
+    }
+
+    fn save_srt(&self, dialogue: &[srt::Dialogue]) -> anyhow::Result<()> {
+        match self {
+            InputOutputLocation::Path(path) => srt::save(path, dialogue),
+            InputOutputLocation::Stdio => {
+                let buf = srt::save_to_string(dialogue);
+                stdout().write_all(buf.as_bytes())?;
+                Ok(())
+            }
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
@@ -135,7 +190,7 @@ pub enum Subcommands {
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum, PartialEq, Eq)]
-pub enum SubtitleFormat {
+pub enum ConvertFormat {
     Auto,
     Srt,
     Ass,
@@ -184,16 +239,21 @@ pub struct InPlaceOutputArgs {
     /// then it defaults to creating a file in the current working directory
     /// with the same filename as the input file but with `_modified`
     /// appended to the filename.
+    ///
+    /// If the output is being piped then it is printed into
+    /// stdout instead.
     #[arg(short, long, verbatim_doc_comment)]
     pub output: Option<PathBuf>,
 }
 
 impl InPlaceOutputArgs {
-    pub fn resolve(self, input: &Path) -> anyhow::Result<PathBuf> {
+    fn resolve(self, input: &Path) -> anyhow::Result<InputOutputLocation> {
         if let Some(output) = self.output {
-            Ok(output)
+            Ok(InputOutputLocation::Path(output))
         } else if self.in_place {
-            Ok(input.to_path_buf())
+            Ok(InputOutputLocation::Path(input.to_path_buf()))
+        } else if !stdout().is_terminal() || input.as_os_str() == "-" {
+            Ok(InputOutputLocation::Stdio)
         } else {
             let mut path = PathBuf::new();
             match input.file_stem() {
@@ -205,7 +265,7 @@ impl InPlaceOutputArgs {
                         filename.push(ext);
                     }
                     path.set_file_name(filename);
-                    Ok(path)
+                    Ok(InputOutputLocation::Path(path))
                 }
                 None => anyhow::bail!("invalid filename given (no filename)"),
             }
@@ -215,9 +275,11 @@ impl InPlaceOutputArgs {
 
 #[derive(Args, Debug)]
 pub struct ConvertArgs {
-    #[arg(long, default_value_t = SubtitleFormat::Auto, value_enum)]
-    pub to: SubtitleFormat,
+    #[arg(long, default_value_t = ConvertFormat::Auto, value_enum)]
+    pub to: ConvertFormat,
     /// The subtitle file to convert to.
+    ///
+    /// If `-` is given, then it's interpreted as stdin.
     pub file: PathBuf,
     /// Where to output the file.
     ///
@@ -225,6 +287,9 @@ pub struct ConvertArgs {
     /// detect the conversion format if provided. If an output
     /// file is not provided, then the conversion format
     /// must be given.
+    ///
+    /// If the program is being piped then it outputs
+    /// the file to stdout.
     #[arg(short, long, verbatim_doc_comment)]
     pub output: Option<PathBuf>,
 }
@@ -235,8 +300,8 @@ impl ConvertArgs {
     /// If the command line arguments are invalid then this exits.
     /// Otherwise this modifies `to` to the appropriate setting if
     /// set to `ConvertFormat::Auto`.
-    pub fn validate_output(&mut self) -> PathBuf {
-        if self.to == SubtitleFormat::Auto && self.output.is_none() {
+    fn validate_output(&mut self) -> InputOutputLocation {
+        if self.to == ConvertFormat::Auto && self.output.is_none() {
             let mut cmd = Cli::command();
             cmd.error(
                 clap::error::ErrorKind::MissingRequiredArgument,
@@ -259,10 +324,10 @@ impl ConvertArgs {
 
         match self.output.take() {
             Some(path) => {
-                if self.to == SubtitleFormat::Auto {
+                if self.to == ConvertFormat::Auto {
                     self.to = match path.extension().and_then(|s| s.to_str()) {
-                        Some("ass") => SubtitleFormat::Ass,
-                        Some("srt") => SubtitleFormat::Srt,
+                        Some("ass") => ConvertFormat::Ass,
+                        Some("srt") => ConvertFormat::Srt,
                         _ => Cli::command()
                             .error(
                                 clap::error::ErrorKind::ValueValidation,
@@ -272,13 +337,17 @@ impl ConvertArgs {
                     };
                 }
 
-                path
+                InputOutputLocation::Path(path)
             }
             None => {
+                if !stdout().is_terminal() {
+                    return InputOutputLocation::Stdio;
+                }
+
                 let extension = match self.to {
-                    SubtitleFormat::Ass => "ass",
-                    SubtitleFormat::Srt => "srt",
-                    SubtitleFormat::Auto => unreachable!(),
+                    ConvertFormat::Ass => "ass",
+                    ConvertFormat::Srt => "srt",
+                    ConvertFormat::Auto => unreachable!(),
                 };
                 let mut output = PathBuf::new();
                 if let Some(filename) = self.file.file_stem() {
@@ -286,7 +355,7 @@ impl ConvertArgs {
                     filename.push(".");
                     filename.push(extension);
                     output.set_file_name(filename);
-                    output
+                    InputOutputLocation::Path(output)
                 } else {
                     Cli::command()
                         .error(
@@ -302,11 +371,13 @@ impl ConvertArgs {
     /// Runs the conversion utility.
     pub fn run(mut self) -> anyhow::Result<()> {
         let output = self.validate_output();
-        match self.file.extension().and_then(|s| s.to_str()) {
-            Some("ass") => {
-                let ass = Ass::open(&self.file)?;
+        let input = InputOutputLocation::new(self.file);
+        let contents = input.read_as_string()?;
+        match SubtitleFormat::detect(&contents) {
+            Some(SubtitleFormat::Ass) => {
+                let ass = contents.parse::<Ass>()?;
                 match self.to {
-                    SubtitleFormat::Srt => {
+                    ConvertFormat::Srt => {
                         let dialogue = ass
                             .sections
                             .into_iter()
@@ -323,38 +394,36 @@ impl ConvertArgs {
                                 end: e.end,
                                 text: clean_ass_text(&e.text),
                             })
-                            .collect();
-                        srt::save(&output, dialogue)
+                            .collect::<Vec<_>>();
+
+                        output.save_srt(&dialogue)
                     }
-                    SubtitleFormat::Ass => {
+                    ConvertFormat::Ass => {
                         // .ass -> .ass is a bit weird, but I guess
                         // just run it through the parser to clean it up
-                        ass.save(&output)?;
-                        Ok(())
+                        output.save_ass(&ass)
                     }
                     _ => Ok(()),
                 }
             }
-            Some("srt") => {
-                let dialogue = srt::load(&self.file)?;
+            Some(SubtitleFormat::Srt) => {
+                let dialogue = srt::load_from_string(&contents)?;
                 match self.to {
-                    SubtitleFormat::Srt => srt::save(&output, dialogue),
-                    SubtitleFormat::Ass => {
+                    ConvertFormat::Srt => output.save_srt(&dialogue),
+                    ConvertFormat::Ass => {
                         let ass = Ass::from_srt(dialogue);
-                        ass.save(&output)?;
-                        Ok(())
+                        output.save_ass(&ass)
                     }
                     _ => Ok(()),
                 }
             }
-            Some("vtt") => {
-                let dialogue = vtt::load(&self.file)?;
+            Some(SubtitleFormat::Vtt) => {
+                let dialogue = vtt::load_from_string(&contents)?;
                 match self.to {
-                    SubtitleFormat::Srt => srt::save(&output, dialogue),
-                    SubtitleFormat::Ass => {
+                    ConvertFormat::Srt => output.save_srt(&dialogue),
+                    ConvertFormat::Ass => {
                         let ass = Ass::from_srt(dialogue);
-                        ass.save(&output)?;
-                        Ok(())
+                        output.save_ass(&ass)
                     }
                     _ => Ok(()),
                 }
@@ -367,6 +436,8 @@ impl ConvertArgs {
 #[derive(Args, Debug)]
 pub struct InfoArgs {
     /// The subtitle file to get information for.
+    ///
+    /// If `-` is given, then it's interpreted as stdin.
     pub file: PathBuf,
 }
 
@@ -526,26 +597,29 @@ impl InfoArgs {
     }
 
     pub fn run(self) -> anyhow::Result<()> {
-        match self.file.extension().and_then(|s| s.to_str()) {
-            Some("ass") => {
-                let subs = Ass::open(&self.file)?;
+        let input = InputOutputLocation::new(self.file.clone());
+        let contents = input.read_as_string()?;
+        let format = SubtitleFormat::detect(&contents);
+        match format {
+            Some(SubtitleFormat::Ass) => {
+                let subs = contents.parse()?;
                 self.info_for_ass(subs);
                 Ok(())
             }
-            Some("vtt") => {
-                let dialogue = vtt::load(&self.file)?;
+            Some(SubtitleFormat::Vtt) => {
+                let dialogue = vtt::load_from_string(&contents)?;
                 self.simple_info(&dialogue);
                 Ok(())
             }
-            Some("srt") => {
-                let dialogue = srt::load(&self.file)?;
+            Some(SubtitleFormat::Srt) => {
+                let dialogue = srt::load_from_string(&contents)?;
                 self.simple_info(&dialogue);
                 Ok(())
             }
             _ => Cli::command()
                 .error(
                     clap::error::ErrorKind::ValueValidation,
-                    "could not recognize subtitle type from file extension",
+                    "could not recognize subtitle type",
                 )
                 .exit(),
         }
@@ -555,6 +629,8 @@ impl InfoArgs {
 #[derive(Args, Debug)]
 pub struct ShiftArgs {
     /// The subtitle file to shift
+    ///
+    /// If `-` is given, then it's interpreted as stdin.
     file: PathBuf,
     #[command(flatten)]
     output: InPlaceOutputArgs,
@@ -568,27 +644,34 @@ pub struct ShiftArgs {
 impl ShiftArgs {
     pub fn run(self) -> anyhow::Result<()> {
         let output = self.output.resolve(&self.file)?;
-        match self.file.extension().and_then(|s| s.to_str()) {
-            Some("ass") => {
-                let mut subs = Ass::open(&self.file)?;
+        let input = InputOutputLocation::new(self.file);
+        let contents = input.read_as_string()?;
+        match SubtitleFormat::detect(&contents) {
+            Some(SubtitleFormat::Ass) => {
+                let mut subs = contents.parse::<Ass>()?;
                 subs.events_mut()
                     .filter(|e| self.range.contains(&e.start))
                     .for_each(|e| e.shift_by(self.by));
-                subs.save(&output)?;
-                Ok(())
+                output.save_ass(&subs)
             }
-            Some("srt") => {
-                let mut dialogue = srt::load(&self.file)?;
+            Some(SubtitleFormat::Srt) => {
+                let mut dialogue = srt::load_from_string(&contents)?;
                 dialogue
                     .iter_mut()
                     .filter(|d| self.range.contains(&d.start))
                     .for_each(|d| d.shift_by(self.by));
-                srt::save(&output, dialogue)
+                output.save_srt(&dialogue)
             }
-            _ => Cli::command()
+            Some(_) => Cli::command()
                 .error(
                     clap::error::ErrorKind::ValueValidation,
-                    "could not recognize subtitle type from file extension",
+                    "unsupported subtitle format for this operation",
+                )
+                .exit(),
+            None => Cli::command()
+                .error(
+                    clap::error::ErrorKind::ValueValidation,
+                    "could not recognize subtitle type",
                 )
                 .exit(),
         }
@@ -598,6 +681,8 @@ impl ShiftArgs {
 #[derive(Args, Debug)]
 pub struct CleanupArgs {
     /// The subtitle file to cleanup
+    ///
+    /// If `-` is given, then it's interpreted as stdin.
     file: PathBuf,
     #[command(flatten)]
     output: InPlaceOutputArgs,
@@ -641,9 +726,11 @@ pub struct CleanupArgs {
 impl CleanupArgs {
     pub fn run(self) -> anyhow::Result<()> {
         let output = self.output.resolve(&self.file)?;
-        match self.file.extension().and_then(|s| s.to_str()) {
-            Some("srt") => {
-                let mut dialogue = srt::load(&self.file)?;
+        let input = InputOutputLocation::new(self.file);
+        let contents = input.read_as_string()?;
+        match SubtitleFormat::detect(&contents) {
+            Some(SubtitleFormat::Srt) => {
+                let mut dialogue = srt::load_from_string(&contents)?;
                 if self.remove {
                     dialogue.retain(|d| !self.range.contains(&d.start));
                 }
@@ -670,10 +757,10 @@ impl CleanupArgs {
                     d.position = (index + 1) as u32;
                 }
 
-                srt::save(&output, dialogue)
+                output.save_srt(&dialogue)
             }
-            Some("ass") => {
-                let mut subs = Ass::open(&self.file)?;
+            Some(SubtitleFormat::Ass) => {
+                let mut subs = contents.parse::<Ass>()?;
 
                 // This removes *all* comments from the file
                 if self.comments {
@@ -723,13 +810,18 @@ impl CleanupArgs {
                             && !(self.unused_styles && !used_styles.contains(d.style.as_str()))
                     });
                 }
-                subs.save(&output)?;
-                Ok(())
+                output.save_ass(&subs)
             }
-            _ => Cli::command()
+            Some(_) => Cli::command()
                 .error(
                     clap::error::ErrorKind::ValueValidation,
-                    "could not recognize subtitle type from file extension",
+                    "unsupported subtitle format for this operation",
+                )
+                .exit(),
+            None => Cli::command()
+                .error(
+                    clap::error::ErrorKind::ValueValidation,
+                    "could not recognize subtitle type",
                 )
                 .exit(),
         }

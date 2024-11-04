@@ -1,4 +1,11 @@
-use std::{error::Error, fmt::Display, io::Write, path::Path, str::FromStr, time::Duration};
+use std::{
+    error::Error,
+    fmt::Display,
+    io::Write,
+    path::Path,
+    str::FromStr,
+    time::Duration,
+};
 
 use anyhow::Context;
 
@@ -121,9 +128,8 @@ impl FromStr for Dialogue {
     }
 }
 
-pub fn load(path: &Path) -> anyhow::Result<Vec<Dialogue>> {
+pub fn load_from_string(buffer: &str) -> anyhow::Result<Vec<Dialogue>> {
     use anyhow::Context;
-    let buffer = crate::load_file(path)?;
     buffer
         .split_terminator("\n\n")
         .enumerate()
@@ -132,21 +138,30 @@ pub fn load(path: &Path) -> anyhow::Result<Vec<Dialogue>> {
                 .with_context(|| format!("from srt dialogue {}", i + 1))
         })
         .collect::<Result<Vec<_>, _>>()
+}
+
+pub fn load(path: &Path) -> anyhow::Result<Vec<Dialogue>> {
+    load_from_string(&crate::load_file(path)?)
         .with_context(|| format!("Failed to extract dialogue from {}", path.display()))
 }
 
-pub fn save(path: &Path, dialogue: Vec<Dialogue>) -> anyhow::Result<()> {
+pub fn save(path: &Path, dialogue: &[Dialogue]) -> anyhow::Result<()> {
+    let new_contents = save_to_string(dialogue);
+    let mut new_fp = std::fs::File::create(path)
+        .with_context(|| "could not create new subtitle file".to_string())?;
+    new_fp.write_all(new_contents.as_bytes())?;
+    Ok(())
+}
+
+pub fn save_to_string(dialogue: &[Dialogue]) -> String {
     let mut new_contents = dialogue
-        .into_iter()
+        .iter()
         .map(|f| f.to_string())
         .collect::<Vec<_>>()
         .join("\n\n");
 
     new_contents.push_str("\n\n");
-    let mut new_fp = std::fs::File::create(path)
-        .with_context(|| "could not create new subtitle file".to_string())?;
-    new_fp.write_all(new_contents.as_bytes())?;
-    Ok(())
+    new_contents
 }
 
 #[cfg(test)]
