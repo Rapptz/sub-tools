@@ -31,7 +31,12 @@ fn valid_duration(s: &str) -> Result<f32, String> {
 
 fn ass_tag_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r#"\{.+\}"#).unwrap())
+    REGEX.get_or_init(|| Regex::new(r#"\{(.+)\}"#).unwrap())
+}
+
+fn allowed_ass_tags_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r#"(\\an\d)"#).unwrap())
 }
 
 fn drawing_events_regex() -> &'static Regex {
@@ -48,7 +53,18 @@ fn clean_ass_text(s: &str) -> String {
     // Remove drawing events
     let result = drawing_events_regex().replace_all(s, "");
     // Remove all other ass tags
-    let result = ass_tag_regex().replace_all(&result, "");
+    let result = ass_tag_regex().replace_all(&result, |captures: &regex::Captures| {
+        match allowed_ass_tags_regex().find(&captures[1]) {
+            Some(m) => {
+                let mut buffer = String::with_capacity(2 + m.len());
+                buffer.push('{');
+                buffer.push_str(m.as_str());
+                buffer.push('}');
+                buffer
+            }
+            None => String::new(),
+        }
+    });
     // Replace special characters
     special_ass_character_regex()
         .replace_all(&result, |captures: &regex::Captures| {
