@@ -74,3 +74,27 @@ pub(crate) fn parse_duration(s: &str) -> Option<Duration> {
         }
     }
 }
+
+/// An iterator for lines similar to Lines but has an exposed `remainder` method
+/// in stable Rust
+pub(crate) struct Lines<'a>(&'a str);
+
+impl Lines<'_> {
+    pub(crate) fn new(s: &str) -> Lines<'_> {
+        Lines(s)
+    }
+
+    pub(crate) const fn remainder(&self) -> &str {
+        self.0
+    }
+}
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (segment, remainder) = self.0.split_once('\n')?;
+        self.0 = remainder;
+        Some(segment)
+    }
+}
