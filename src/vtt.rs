@@ -82,6 +82,7 @@ pub fn load_from_string(buffer: &str) -> std::io::Result<Vec<Dialogue>> {
     };
 
     Ok(buffer[index - 1..]
+        .trim_end()
         .split_terminator("\n\n")
         .enumerate()
         .flat_map(parse_dialogue)

@@ -117,6 +117,7 @@ impl FromStr for Dialogue {
 pub fn load_from_string(buffer: &str) -> anyhow::Result<Vec<Dialogue>> {
     use anyhow::Context;
     buffer
+        .trim_end()
         .split_terminator("\n\n")
         .enumerate()
         .map(|(i, s)| {
