@@ -1,11 +1,4 @@
-use std::{
-    error::Error,
-    fmt::Display,
-    io::Write,
-    path::Path,
-    str::FromStr,
-    time::Duration,
-};
+use std::{error::Error, fmt::Display, io::Write, path::Path, str::FromStr, time::Duration};
 
 use anyhow::Context;
 
@@ -83,14 +76,7 @@ impl Display for ParseDialogueError {
 pub(crate) fn parse_srt_time(s: &str) -> Option<Duration> {
     // HH:MM:SS,mmm
     // HH is optional (due to VTT)
-    let (rest, ms) = s.split_once([',', '.'])?;
-    let mut split = rest.trim().splitn(3, ':');
-    let hours: u64 = split.next()?.parse().ok().unwrap_or_default();
-    let minutes: u64 = split.next()?.parse().ok()?;
-    let seconds: u64 = split.next()?.parse().ok()?;
-    let seconds = seconds + (minutes * 60) + (hours * 3600);
-    let nanos = ms.trim().parse::<u32>().ok()?.saturating_mul(1_000_000);
-    Some(Duration::new(seconds, nanos))
+    crate::utils::parse_duration(s)
 }
 
 impl Error for ParseDialogueError {}

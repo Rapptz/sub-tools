@@ -82,41 +82,6 @@ fn clean_ass_text(s: &str) -> String {
         .into_owned()
 }
 
-/// A duration that can be parsed from the command line or as a string input.
-///
-/// The format is `HH:MM:SS.ssss` with `HH` and `.ssss` being optional.
-/// So e.g. 10:24 is 10 minutes and 24 seconds but 10:24:00 is 10 hours, 24 minutes and 0 seconds.
-fn parse_duration_helper(s: &str) -> Option<Duration> {
-    let mut components = s.splitn(3, ':').map(|s| s.parse::<u64>().ok());
-    let first = components.next()??;
-    let second = components.next()??;
-    match components.next() {
-        Some(Some(third)) => {
-            // This case contains hours, minutes, and seconds
-            Some(Duration::from_secs(first * 3600 + second * 60 + third))
-        }
-        Some(None) => {
-            // This one's an invalid parse, e.g. 10:24:aa
-            None
-        }
-        None => {
-            // This case is just 10:24 or 10m24s
-            Some(Duration::from_secs(first * 60 + second))
-        }
-    }
-}
-
-fn parse_duration_fractional_helper(s: &str) -> Option<Duration> {
-    match s.split_once('.') {
-        Some((duration, fractional)) => {
-            let duration = parse_duration_helper(duration)?;
-            let ms = Duration::from_millis(fractional.parse().ok()?);
-            Some(duration + ms)
-        }
-        None => parse_duration_helper(s),
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct InvalidDuration;
 
@@ -129,7 +94,7 @@ impl std::fmt::Display for InvalidDuration {
 impl std::error::Error for InvalidDuration {}
 
 fn parse_duration(s: &str) -> Result<Duration, InvalidDuration> {
-    parse_duration_fractional_helper(s).ok_or(InvalidDuration)
+    crate::utils::parse_duration(s).ok_or(InvalidDuration)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
