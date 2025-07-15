@@ -62,6 +62,7 @@ pub fn load_from_string(buffer: &str) -> std::io::Result<Vec<Dialogue>> {
 
     Ok(buffer[index - 1..]
         .split_terminator("\n\n")
+        .filter(|s| !s.is_empty())
         .flat_map(parse_dialogue)
         .collect::<Vec<_>>())
 }

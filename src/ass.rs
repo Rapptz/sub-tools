@@ -636,7 +636,7 @@ fn ass_timestamp_to_duration(s: &str) -> Option<Duration> {
 
 struct AssDuration<'a>(&'a Duration);
 
-impl<'a> Display for AssDuration<'a> {
+impl Display for AssDuration<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // .ass files work with centiseconds instead of ms for some reason
         let centi = self.0.as_millis() / 10;
